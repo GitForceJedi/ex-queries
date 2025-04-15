@@ -472,3 +472,118 @@ Returns the status
 
 Optionally updates the table as well (but this is less common in pure functions)
 
+
+***UDT:
+CREATE TYPE mood AS ENUM ('happy', 'sad', 'neutral');
+
+***Materialized View (Stored View):
+CREATE MATERIALIZED VIEW monthly_sales AS
+SELECT * FROM sales WHERE sale_date >= CURRENT_DATE - INTERVAL '30 days';
+
+*** View:
+CREATE VIEW active_customers AS
+SELECT * FROM customers WHERE active = TRUE;
+
+***Recursive CTE:
+WITH RECURSIVE subordinates AS (
+  SELECT id, name FROM employees WHERE manager_id IS NULL
+  UNION ALL
+  SELECT e.id, e.name
+  FROM employees e
+  JOIN subordinates s ON e.manager_id = s.id
+)
+SELECT * FROM subordinates;
+
+
+
+*** Trigger:
+CREATE TRIGGER log_changes
+AFTER UPDATE ON products
+FOR EACH ROW EXECUTE FUNCTION log_product_update();
+
+1. By Timing — WHEN the trigger fires
+
+Type	Description
+BEFORE	Fires before the triggering statement executes. Use it to modify or validate data before it's written.
+AFTER	Fires after the statement executes. Use it to log, notify, or perform follow-up actions.
+INSTEAD OF	Used with views, this type replaces the triggering statement entirely. Useful for making views "updatable".
+⚡ 2. By Event — WHAT kind of statement causes the trigger
+
+Triggered On	Description
+INSERT	Fires when a new row is inserted
+UPDATE	Fires when a row is updated
+DELETE	Fires when a row is deleted
+TRUNCATE	Fires when a table is truncated (PostgreSQL 9.1+)
+🧬 3. By Scope — HOW many times it fires
+
+Level	Description
+FOR EACH ROW	Fires once per affected row. Useful when you need access to NEW and OLD row values.
+FOR EACH STATEMENT	Fires once per SQL statement, regardless of how many rows are affected. Faster, but no row-level access.
+✅ Trigger Type Matrix
+
+Timing	Event	Scope	Notes
+BEFORE	INSERT	EACH ROW	Validate/modify data before insert
+BEFORE	UPDATE	EACH ROW	Check values or override them
+AFTER	INSERT	EACH STATEMENT	Audit/log insert activity
+AFTER	DELETE	EACH ROW	Log deleted data or cascade deletes
+INSTEAD OF	UPDATE	EACH ROW	Used on views to simulate updating underlying tables
+🧠 Accessing Data in Triggers
+
+Variable	Description
+NEW	The row after the change (used in INSERT/UPDATE)
+OLD	The row before the change (used in UPDATE/DELETE)
+
+#Example BEFORE INSERT Trigger:
+CREATE FUNCTION set_default_status()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.status IS NULL THEN
+    NEW.status := 'pending';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trigger_set_status
+BEFORE INSERT ON orders
+FOR EACH ROW
+EXECUTE FUNCTION set_default_status();
+
+#Example AFTER DELETE (Audit):
+CREATE FUNCTION log_deletion()
+RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO deleted_orders_log(order_id, deleted_at)
+  VALUES (OLD.id, NOW());
+  RETURN OLD;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trigger_log_delete
+AFTER DELETE ON orders
+FOR EACH ROW
+EXECUTE FUNCTION log_deletion();
+
+#Example: INSTEAD OF UPDATE on View
+CREATE VIEW active_users AS
+SELECT * FROM users WHERE active = true;
+
+CREATE FUNCTION update_active_user()
+RETURNS TRIGGER AS $$
+BEGIN
+  UPDATE users
+  SET name = NEW.name
+  WHERE id = OLD.id;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trigger_update_view
+INSTEAD OF UPDATE ON active_users
+FOR EACH ROW
+EXECUTE FUNCTION update_active_user();
+
+
+
+
+
