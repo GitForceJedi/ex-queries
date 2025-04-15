@@ -1,0 +1,474 @@
+***DELETE DUPLICATE Data:
+
+(PostgreSQL):
+DELETE FROM users
+WHERE ctid NOT IN (
+  SELECT MIN(ctid)
+  FROM users
+  GROUP BY name, email
+);
+
+
+DELETE FROM users
+WHERE id NOT IN (
+  SELECT MIN(id)
+  FROM users
+  GROUP BY name, email
+);
+
+Explanation:
+GROUP BY name, email groups rows that are duplicates based on those columns.
+
+MIN(id) ensures only the row with the smallest id is kept.
+
+The outer DELETE removes all other rows not in that group.
+
+
+***Display the highest and lowest salary corresponding to each department:
+
+SELECT 
+  department,
+  MAX(salary) AS highest_salary,
+  MIN(salary) AS lowest_salary
+FROM employees
+GROUP BY department;
+
+Explanation:
+GROUP BY department groups rows by each unique department.
+
+MAX(salary) and MIN(salary) calculate the highest and lowest salary per group.
+
+The result gives you one row per department with its salary range.
+
+-- Highest paid employee per department
+SELECT DISTINCT ON (department)
+  department,
+  name AS highest_paid_employee,
+  salary AS highest_salary
+FROM employees
+ORDER BY department, salary DESC;
+
+-- Lowest paid employee per department
+SELECT DISTINCT ON (department)
+  department,
+  name AS lowest_paid_employee,
+  salary AS lowest_salary
+FROM employees
+ORDER BY department, salary ASC;
+
+-- Highest / Lowest employee combined:
+WITH ranked_salaries AS (
+  SELECT
+    department,
+    name,
+    salary,
+    RANK() OVER (PARTITION BY department ORDER BY salary DESC) AS salary_rank_desc,
+    RANK() OVER (PARTITION BY department ORDER BY salary ASC) AS salary_rank_asc
+  FROM employees
+)
+SELECT
+  d.department,
+  h.name AS highest_paid_employee,
+  h.salary AS highest_salary,
+  l.name AS lowest_paid_employee,
+  l.salary AS lowest_salary
+FROM 
+  (SELECT DISTINCT department FROM employees) d
+LEFT JOIN ranked_salaries h
+  ON d.department = h.department AND h.salary_rank_desc = 1
+LEFT JOIN ranked_salaries l
+  ON d.department = l.department AND l.salary_rank_asc = 1;
+
+
+***Get Actual Distance Traveled Per Day:
+SELECT
+  cars,
+  days,
+  cumulative_distance,
+  cumulative_distance - COALESCE(LAG(cumulative_distance) OVER (
+    PARTITION BY cars ORDER BY days
+  ), 0) AS actual_distance
+FROM car_travels
+ORDER BY cars, days;
+
+Here's what each part does:
+LAG(cumulative_distance): looks at the value of the previous row in the window.
+
+OVER (...): tells SQL how to define that "window" of rows.
+
+PARTITION BY cars: restarts the window calculation for each car.
+
+ORDER BY days: defines the order in which to apply the LAG() function — essentially, which day is considered "previous".
+
+
+***Schedule where each team plays every other team once:
+You can use a self-join with a filter to prevent duplicate matchups and self-matches.
+
+SELECT 
+  t1.team_name AS home_team,
+  t2.team_name AS away_team
+FROM teams t1
+JOIN teams t2 ON t1.team_id < t2.team_id
+ORDER BY home_team, away_team;
+
+Explanation:
+t1.team_id < t2.team_id ensures each unique pairing only shows once, and a team doesn’t play itself.
+
+You get a list of matches like:
+
+Yankees vs Red Sox
+
+Yankees vs Dodgers
+
+Yankees vs Cubs
+
+Red Sox vs Dodgers
+
+etc.
+
+***Schedule where each team plays every other team twice (home and away):
+
+This time, just avoid self-matches, but allow both directions of the pairing.
+
+SELECT 
+  t1.team_name AS home_team,
+  t2.team_name AS away_team
+FROM teams t1
+JOIN teams t2 ON t1.team_id <> t2.team_id
+ORDER BY home_team, away_team;
+
+***Generate All Home/Away Matchups With Dates
+WITH matchups AS (
+  SELECT 
+    t1.team_name AS home_team,
+    t2.team_name AS away_team
+  FROM teams t1
+  JOIN teams t2 ON t1.team_id <> t2.team_id
+),
+numbered_games AS (
+  SELECT 
+    ROW_NUMBER() OVER () - 1 AS game_number,
+    home_team,
+    away_team
+  FROM matchups
+)
+SELECT 
+  home_team,
+  away_team,
+  DATE '2025-05-01' + game_number AS game_date
+FROM numbered_games
+ORDER BY game_date;
+
+
+***Show the total sales (in dollars), total items sold, and number of distinct orders per customer per product category, only for customers in the 'West' region who have more than 2 orders.
+
+SELECT 
+  c.name AS customer_name,
+  p.category AS product_category,
+  COUNT(DISTINCT o.id) AS total_orders,
+  SUM(oi.quantity) AS total_items_sold,
+  SUM(oi.quantity * p.price) AS total_sales
+FROM customers c
+JOIN orders o ON o.customer_id = c.id
+JOIN order_items oi ON oi.order_id = o.id
+JOIN products p ON p.id = oi.product_id
+WHERE c.region = 'West'
+GROUP BY c.id, p.category
+HAVING COUNT(DISTINCT o.id) > 2
+ORDER BY total_sales DESC;
+
+For customers in the "West" region who have placed more than two orders, the query finds:
+
+How many distinct orders they made
+
+How many total items they bought
+
+How much money they spent
+
+This is grouped by each product category they purchased
+
+# FROM & JOINs
+FROM customers c
+JOIN orders o ON o.customer_id = c.id
+JOIN order_items oi ON oi.order_id = o.id
+JOIN products p ON p.id = oi.product_id
+We are combining 4 tables:
+
+customers → has customer details (name, region)
+
+orders → each order linked to a customer
+
+order_items → each product in an order (quantity)
+
+products → product details like category and price
+
+Why join them?
+
+We need to link everything from customer → order → item → product, to answer business-level questions like sales per customer per product category.
+
+# WHERE Clause
+
+WHERE c.region = 'West'
+This filters the results early to only include customers from the 'West' region
+
+It helps improve performance by cutting down the dataset before aggregation
+
+# SELECT & Aggregates
+
+SELECT 
+  c.name AS customer_name,
+  p.category AS product_category,
+  COUNT(DISTINCT o.id) AS total_orders,
+  SUM(oi.quantity) AS total_items_sold,
+  SUM(oi.quantity * p.price) AS total_sales
+Each selected column:
+c.name: the customer's name
+
+p.category: product category they’ve bought from
+
+COUNT(DISTINCT o.id): number of unique orders
+
+SUM(oi.quantity): how many items they bought in total
+
+SUM(oi.quantity * p.price): total dollars spent = quantity × price
+
+# GROUP BY Clause
+
+GROUP BY c.id, p.category
+We're grouping the data per customer and product category
+
+So if one customer buys both "Electronics" and "Books", they will appear in two rows, one per category.
+
+# HAVING Clause
+
+HAVING COUNT(DISTINCT o.id) > 2
+After grouping, we filter out customers who have 2 or fewer unique orders
+
+This is a post-aggregation filter, so it uses HAVING (not WHERE)
+
+#ORDER BY Clause
+
+ORDER BY total_sales DESC
+Sort the results so that the highest spenders appear first
+
+Helps visualize top customers/categories at a glance
+
+### Window Version:
+SELECT 
+  c.name AS customer_name,
+  c.region,
+  p.category AS product_category,
+  SUM(oi.quantity) AS total_items_sold,
+  SUM(oi.quantity * p.price) AS total_sales_by_category,
+
+  -- Window Function #1: Total sales by customer across all categories
+  SUM(oi.quantity * p.price) OVER (PARTITION BY c.id) AS total_sales_all_categories,
+
+  -- Window Function #2: Rank of customer by total sales in their region
+  RANK() OVER (PARTITION BY c.region ORDER BY SUM(oi.quantity * p.price) DESC) AS regional_rank
+
+FROM customers c
+JOIN orders o ON o.customer_id = c.id
+JOIN order_items oi ON oi.order_id = o.id
+JOIN products p ON p.id = oi.product_id
+
+WHERE c.region = 'West'
+
+GROUP BY c.id, c.name, c.region, p.category
+ORDER BY total_sales_all_categories DESC;
+
+# Explanation of Window Functions
+# SUM(...) OVER (PARTITION BY c.id)
+Computes total sales for each customer across all categories
+
+Unlike GROUP BY, this lets us show:
+
+One row per category per customer
+
+AND the customer’s grand total alongside each row
+
+# RANK() OVER (PARTITION BY c.region ORDER BY SUM(...) DESC)
+Gives each customer a ranking within their region
+
+Ranks are based on total sales (across all categories)
+
+Same total = same rank (RANK), or use DENSE_RANK / ROW_NUMBER depending on needs
+
+### CTE Version:
+WITH base_data AS (
+  SELECT
+    c.id AS customer_id,
+    c.name AS customer_name,
+    c.region,
+    p.category,
+    oi.quantity,
+    p.price,
+    (oi.quantity * p.price) AS line_total,
+    o.id AS order_id
+  FROM customers c
+  JOIN orders o ON o.customer_id = c.id
+  JOIN order_items oi ON oi.order_id = o.id
+  JOIN products p ON p.id = oi.product_id
+  WHERE c.region = 'West'
+),
+
+category_summary AS (
+  SELECT
+    customer_id,
+    customer_name,
+    region,
+    category,
+    COUNT(DISTINCT order_id) AS total_orders,
+    SUM(quantity) AS total_items_sold,
+    SUM(line_total) AS total_sales_by_category
+  FROM base_data
+  GROUP BY customer_id, customer_name, region, category
+),
+
+final_result AS (
+  SELECT
+    *,
+    -- Total sales by customer across all categories
+    SUM(total_sales_by_category) OVER (PARTITION BY customer_id) AS total_sales_all_categories,
+
+    -- Ranking customers by sales in their region
+    RANK() OVER (PARTITION BY region ORDER BY SUM(total_sales_by_category) OVER (PARTITION BY customer_id) DESC) AS regional_rank
+  FROM category_summary
+)
+
+SELECT *
+FROM final_result
+WHERE total_orders > 2
+ORDER BY total_sales_all_categories DESC;
+
+#Breakdown of Each CTE
+1. base_data
+Gets all necessary details in one place (joined and enriched with line_total)
+
+Only pulls West region customers
+
+2. category_summary
+Aggregates:
+
+How many orders per category (COUNT(DISTINCT order_id))
+
+How many items sold
+
+How much was spent per category
+
+3. final_result
+Adds window functions:
+
+Total sales across all categories for each customer
+
+Ranks customers by their overall sales in their region
+
+
+***Stored Procedure:
+CREATE PROCEDURE get_sales_summary_by_region(region_input TEXT)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  -- Returns a result set (like SELECT)
+  CALL get_sales_summary_by_region_inner(region_input);
+END;
+$$;
+
+-- The actual logic (split for readability)
+CREATE PROCEDURE get_sales_summary_by_region_inner(region_input TEXT)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  -- Query with joins and aggregates
+  -- You could also use a temp table if needed
+  RAISE NOTICE 'Sales summary for region: %', region_input;
+
+  -- Final SELECT (can be swapped with INSERT INTO temp table, etc.)
+  EXECUTE format($f$
+    SELECT 
+      c.name AS customer_name,
+      p.category AS product_category,
+      COUNT(DISTINCT o.id) AS total_orders,
+      SUM(oi.quantity) AS total_items_sold,
+      SUM(oi.quantity * p.price) AS total_sales
+    FROM customers c
+    JOIN orders o ON o.customer_id = c.id
+    JOIN order_items oi ON oi.order_id = o.id
+    JOIN products p ON p.id = oi.product_id
+    WHERE c.region = %L
+    GROUP BY c.name, p.category
+    HAVING COUNT(DISTINCT o.id) > 2
+    ORDER BY total_sales DESC;
+  $f$, region_input);
+END;
+$$;
+
+
+***Stored Procedure with IF logic:
+CREATE PROCEDURE update_order_status(IN input_order_id INT)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  order_total NUMERIC;
+BEGIN
+  -- Get the total_amount for this order
+  SELECT total_amount INTO order_total
+  FROM orders
+  WHERE id = input_order_id;
+
+  -- Use IF to set status based on total_amount
+  IF order_total >= 1000 THEN
+    UPDATE orders SET status = 'High Value' WHERE id = input_order_id;
+
+  ELSIF order_total >= 500 THEN
+    UPDATE orders SET status = 'Medium Value' WHERE id = input_order_id;
+
+  ELSE
+    UPDATE orders SET status = 'Low Value' WHERE id = input_order_id;
+  END IF;
+
+  RAISE NOTICE 'Order % updated to status based on amount: %', input_order_id, order_total;
+END;
+$$;
+
+#Used / Called:
+CALL update_order_status(101);
+
+***Function Example:
+CREATE FUNCTION classify_order_status(order_id INT)
+RETURNS TEXT
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  total NUMERIC;
+  status TEXT;
+BEGIN
+  SELECT total_amount INTO total
+  FROM orders
+  WHERE id = order_id;
+
+  IF total >= 1000 THEN
+    status := 'High Value';
+  ELSIF total >= 500 THEN
+    status := 'Medium Value';
+  ELSE
+    status := 'Low Value';
+  END IF;
+
+  RETURN status;
+END;
+$$;
+
+Use / Call:
+SELECT classify_order_status(101);
+
+Accepts an order_id
+
+Looks up the total_amount
+
+Determines a status (High, Medium, Low)
+
+Returns the status
+
+Optionally updates the table as well (but this is less common in pure functions)
+
